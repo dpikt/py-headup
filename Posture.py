@@ -6,6 +6,7 @@ import time
 SCALE_FACTOR = 0.5
 SEARCH_AREA_FACTOR = 1.5
 FRAME_SKIP = 10
+FACES_REQUIRED = 20
 VIDEO = cv2.VideoCapture(0)
 CASCADE = cv2.CascadeClassifier("cascade.xml")
 
@@ -18,7 +19,11 @@ class Rect:
         self.h = h
     
     def area(self):
-        return self.x * self.y
+        return self.w * self.h
+
+    def distance(self):
+        # Based purely on area
+        return self.area()
 
     def midpoint(self):
         return (self.x + self.w/2, self.y + self.h/2)
@@ -47,6 +52,9 @@ def calculateSearchArea(face, frameRect, factor):
     h = min(h, frameRect.h-y)
     return Rect(x, y, w, h)
 
+def averageDistance(faceList):
+    return sum(face.area() for face in faceList) / len(faceList)
+
 def detectAndDrawFace(frame, searchArea):
 
     searchFrame = cropFrameToRect(frame, searchArea)
@@ -71,13 +79,15 @@ def detectAndDrawFace(frame, searchArea):
     else:
         searchArea = None
 
-    return searchArea
+    return face, searchArea
 
 def runLoop():
     searchArea = None
 
     # Used for skipping frames when searchArea is None
     counter = 0
+
+    faceList = []
 
     while True:
 
@@ -94,7 +104,14 @@ def runLoop():
                 searchArea = Rect(0, 0, len(frame[0]), len(frame))
         else:
             # Detect and draw!
-            searchArea = detectAndDrawFace(frame, searchArea)
+            face, searchArea = detectAndDrawFace(frame, searchArea)
+            if face:
+                faceList.append(face)
+                if len(faceList) > FACES_REQUIRED:
+                    faceList = faceList[1:]
+                    print averageDistance(faceList)
+            else:
+                faceList = []
 
         # Display the resulting frame
         cv2.imshow('Video', frame)
@@ -104,7 +121,7 @@ def runLoop():
             break
 
     # When everything is done, release the capture
-    video_capture.release()
+    VIDEO.release()
     cv2.destroyAllWindows()
 
 
