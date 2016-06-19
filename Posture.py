@@ -2,10 +2,12 @@ import cv2
 import sys
 import time
 
-cascPath = sys.argv[1]
-faceCascade = cv2.CascadeClassifier(cascPath)
-
-video_capture = cv2.VideoCapture(0)
+# Global vars
+SCALE_FACTOR = 0.5
+SEARCH_AREA_FACTOR = 1.5
+FRAME_SKIP = 10
+VIDEO = cv2.VideoCapture(0)
+CASCADE = cv2.CascadeClassifier("cascade.xml")
 
 # Struct for a rectangle
 class Rect:
@@ -45,56 +47,54 @@ def calculateSearchArea(face, frameRect, factor):
     h = min(h, frameRect.h-y)
     return Rect(x, y, w, h)
 
-def main():
+def detectAndDrawFace(frame, searchArea):
 
-    # Global vars
-    SCALE_FACTOR = 0.5
-    SEARCH_AREA_FACTOR = 1.5
-    FRAME_SKIP = 10
+    searchFrame = cropFrameToRect(frame, searchArea)
 
-    # Starting values
+    faces = CASCADE.detectMultiScale(cv2.cvtColor(searchFrame, cv2.COLOR_BGR2GRAY), scaleFactor=1.1, minNeighbors=5, minSize=(30, 30), flags=cv2.cv.CV_HAAR_SCALE_IMAGE)
+
+    # Convert faces to Rect objects and find largest
+    faces = [Rect(x, y, w, h) for (x, y, w, h) in faces]
+    face = getLargestFace(faces)
+
+    if face:
+        # Add back searchArea distance
+        face.x += searchArea.x
+        face.y += searchArea.y
+
+        # Draw face and calculate new search area
+        drawFace(face, frame)
+
+        # Size of full video
+        frameRect = Rect(0, 0, len(frame[0]), len(frame))
+        searchArea = calculateSearchArea(face, frameRect, SEARCH_AREA_FACTOR)
+    else:
+        searchArea = None
+
+    return searchArea
+
+def runLoop():
     searchArea = None
+
+    # Used for skipping frames when searchArea is None
     counter = 0
 
     while True:
 
-        counter += 1
-
         # Capture video and resize
-        ret, frame = video_capture.read()
+        ret, frame = VIDEO.read()
         frame = cv2.resize(frame, (0,0), fx=SCALE_FACTOR, fy=SCALE_FACTOR) 
-        frameRect = Rect(0, 0, len(frame[0]), len(frame))
 
+        # If no search area, look for face every nth frame
         if searchArea is None:
-            if counter%FRAME_SKIP is 0:
-                searchArea = frameRect
+            counter += 1
+            if counter == FRAME_SKIP:
+                counter = 0
+                # Size of full video
+                searchArea = Rect(0, 0, len(frame[0]), len(frame))
         else:
-            # If we have a search area, use it to look for faces
-            searchFrame = cropFrameToRect(frame, searchArea)
-
-            faces = faceCascade.detectMultiScale(
-                cv2.cvtColor(searchFrame, cv2.COLOR_BGR2GRAY),
-                scaleFactor=1.1,
-                minNeighbors=5,
-                minSize=(30, 30),
-                flags=cv2.cv.CV_HAAR_SCALE_IMAGE
-            )
-
-            # Convert faces to Rect objects and find largest
-            faces = [Rect(x, y, w, h) for (x, y, w, h) in faces]
-            face = getLargestFace(faces)
-
-            if face:
-                # Add back searchArea distance
-                face.x += searchArea.x
-                face.y += searchArea.y
-
-                # Draw face and calculate new search area
-                drawFace(face, frame)
-                searchArea = calculateSearchArea(face, frameRect, SEARCH_AREA_FACTOR)
-            else:
-                searchArea = None
-
+            # Detect and draw!
+            searchArea = detectAndDrawFace(frame, searchArea)
 
         # Display the resulting frame
         cv2.imshow('Video', frame)
@@ -107,6 +107,9 @@ def main():
     video_capture.release()
     cv2.destroyAllWindows()
 
+
+def main():
+    runLoop()
 
 if __name__ == '__main__':
     main()
