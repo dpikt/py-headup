@@ -1,6 +1,8 @@
 import cv2
 import sys
 import time
+# import subprocess
+from subprocess import Popen
 
 # Global vars
 SCALE_FACTOR = 0.5
@@ -9,6 +11,8 @@ FRAME_SKIP = 10
 FACES_REQUIRED = 20
 VIDEO = cv2.VideoCapture(0)
 CASCADE = cv2.CascadeClassifier("cascade.xml")
+PROPORTION_LIMIT = 0.3
+ALERTING = False
 
 # Struct for a rectangle
 class Rect:
@@ -31,6 +35,9 @@ class Rect:
     def __str__(self):
         return "x:%i, y:%i, w:%i, h:%i" % (self.x, self.y, self.w, self.h)
 
+def alert():
+    Popen(['afplay', 'alert.mp3'])
+
 def cropFrameToRect(frame, rect):
     return frame[rect.y:rect.y+rect.h, rect.x:rect.x+rect.w]
 
@@ -52,7 +59,7 @@ def calculateSearchArea(face, frameRect, factor):
     h = min(h, frameRect.h-y)
     return Rect(x, y, w, h)
 
-def averageDistance(faceList):
+def averageArea(faceList):
     return sum(face.area() for face in faceList) / len(faceList)
 
 def detectAndDrawFace(frame, searchArea):
@@ -86,8 +93,12 @@ def runLoop():
 
     # Used for skipping frames when searchArea is None
     counter = 0
-
     faceList = []
+
+    # Capture one frame to take measurements
+    ret, frame = VIDEO.read()
+    frame = cv2.resize(frame, (0,0), fx=SCALE_FACTOR, fy=SCALE_FACTOR)
+    frameRect = Rect(0, 0, len(frame[0]), len(frame))
 
     while True:
 
@@ -101,7 +112,7 @@ def runLoop():
             if counter == FRAME_SKIP:
                 counter = 0
                 # Size of full video
-                searchArea = Rect(0, 0, len(frame[0]), len(frame))
+                searchArea = frameRect
         else:
             # Detect and draw!
             face, searchArea = detectAndDrawFace(frame, searchArea)
@@ -109,9 +120,19 @@ def runLoop():
                 faceList.append(face)
                 if len(faceList) > FACES_REQUIRED:
                     faceList = faceList[1:]
-                    print averageDistance(faceList)
+                    avgArea = averageArea(faceList)
+                    proportion = avgArea / float(frameRect.area())
+                    if proportion > PROPORTION_LIMIT:
+                        if not ALERTING:
+                            alert()
+                            ALERTING = True
+                    else:
+                        ALERTING = False
+                else:
+                    ALERTING = False
             else:
                 faceList = []
+                ALERTING = False
 
         # Display the resulting frame
         cv2.imshow('Video', frame)
@@ -127,6 +148,7 @@ def runLoop():
 
 def main():
     runLoop()
+
 
 if __name__ == '__main__':
     main()
