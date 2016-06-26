@@ -1,58 +1,8 @@
 import cv2
 import sys
 import time
+from Rect import Rect
 from subprocess import Popen as runAsync
-
-# Global vars
-SCALE_FACTOR = 0.5
-SEARCH_AREA_FACTOR = 1.5
-FRAME_SKIP = 10
-FACES_REQUIRED = 20
-PROPORTION_LIMIT = 0.3
-
-# Struct for a rectangle
-class Rect:
-    def __init__(self, x, y, w, h):
-        self.x = x
-        self.y = y
-        self.w = w
-        self.h = h
-    
-    def area(self):
-        return self.w * self.h
-
-    def midpoint(self):
-        return (self.x + self.w/2, self.y + self.h/2)
-
-    def __str__(self):
-        return "x:%i, y:%i, w:%i, h:%i" % (self.x, self.y, self.w, self.h)
-
-def alert():
-    runAsync(['afplay', 'alert.mp3'])
-
-def cropFrameToRect(frame, rect):
-    return frame[rect.y:rect.y+rect.h, rect.x:rect.x+rect.w]
-
-def getLargestFace(faces):
-    if len(faces) is 0: 
-        return None
-    return max(faces, key=lambda x: x.area())
-
-def drawFace(face, frame, color=(255, 0, 0)):
-    cv2.rectangle(frame, (face.x, face.y), (face.x+face.w, face.y+face.h), color, 2)
-
-def calculateSearchArea(face, videoRect, factor):
-    # TODO: document this shindig
-    w = int(factor * face.w)
-    h = int(factor * face.h)
-    x = max(face.midpoint()[0] - w/2, 0)
-    y = max(face.midpoint()[1] - h/2, 0)
-    w = min(w, videoRect.w-x)
-    h = min(h, videoRect.h-y)
-    return Rect(x, y, w, h)
-
-def averageArea(faceList):
-    return sum(face.area() for face in faceList) / len(faceList)
 
 
 # Main class
@@ -62,28 +12,63 @@ class PostureTracker:
         self.video = cv2.VideoCapture(0)
         self.cascade = cv2.CascadeClassifier("cascade.xml")
 
+        # Constants
+        self.SEARCH_AREA_FACTOR = 1.5
+        self.SCALE_FACTOR = 0.5
+        self.FRAME_SKIP = 10
+        self.NUM_TO_AVG = 20
+        self.PROPORTION_LIMIT = 0.2
+        self.GOOD_COLOR = (0, 255, 0)
+        self.ALERT_COLOR = (0, 0, 255)
+
         # Set some initial values
         self.currentFrame = None
         self.searchArea = None
         self.faceList = []
         self.alerting = False
+        self.faceColor = self.GOOD_COLOR
 
         # Used for skipping frames when searchArea is None
         self.counter = 0
 
         # Get size of video
         _, frame = self.video.read()
-        frame = cv2.resize(frame, (0,0), fx=SCALE_FACTOR, fy=SCALE_FACTOR)
+        frame = cv2.resize(frame, (0,0), fx=self.SCALE_FACTOR, fy=self.SCALE_FACTOR)
         self.videoRect = Rect(0, 0, len(frame[0]), len(frame))
 
-    def detectAndDrawFace(self):
+    def alert(self):
+        if not self.alerting:
+            self.alerting = True
+            # Play sound
+            runAsync(['afplay', 'alert.mp3'])
+            self.faceColor = self.ALERT_COLOR
 
-        searchFrame = cropFrameToRect(self.currentFrame, self.searchArea)
+    def cropFrameToRect(self, frame, rect):
+        return frame[rect.y:rect.y+rect.h, rect.x:rect.x+rect.w]
+
+    def drawFace(self, face):
+        cv2.rectangle(self.currentFrame, (face.x, face.y), (face.x+face.w, face.y+face.h), self.faceColor, 2)
+
+    def calculateSearchArea(self, face, factor):
+        # TODO: document this shindig
+        w = int(factor * face.w)
+        h = int(factor * face.h)
+        x = max(face.midpoint()[0] - w/2, 0)
+        y = max(face.midpoint()[1] - h/2, 0)
+        w = min(w, self.videoRect.w-x)
+        h = min(h, self.videoRect.h-y)
+        return Rect(x, y, w, h)
+
+    def detectAndDrawFace(self):
+        # Get frame within which we'll search
+        searchFrame = self.cropFrameToRect(self.currentFrame, self.searchArea)
+
+        # Detect faces
         faces = self.cascade.detectMultiScale(cv2.cvtColor(searchFrame, cv2.COLOR_BGR2GRAY), scaleFactor=1.1, minNeighbors=5, minSize=(30, 30), flags=cv2.cv.CV_HAAR_SCALE_IMAGE)
 
         # Convert faces to Rect objects and find largest
         faces = [Rect(x, y, w, h) for (x, y, w, h) in faces]
-        face = getLargestFace(faces)
+        face = Rect.largestRect(faces)
 
         if face:
             # Add back searchArea distance
@@ -91,10 +76,8 @@ class PostureTracker:
             face.y += self.searchArea.y
 
             # Draw face and calculate new search area
-            drawFace(face, self.currentFrame)
-
-            # Size of full video
-            searchArea = calculateSearchArea(face, self.videoRect, SEARCH_AREA_FACTOR)
+            self.drawFace(face)
+            self.searchArea = self.calculateSearchArea(face, self.SEARCH_AREA_FACTOR)
         else:
             self.searchArea = None
 
@@ -103,28 +86,25 @@ class PostureTracker:
     def runLoop(self):
         # Capture video and resize
         _, frame = self.video.read()
-        self.currentFrame = cv2.resize(frame, (0,0), fx=SCALE_FACTOR, fy=SCALE_FACTOR) 
+        self.currentFrame = cv2.resize(frame, (0,0), fx=self.SCALE_FACTOR, fy=self.SCALE_FACTOR) 
 
         # If no search area, look for face every nth frame
         if self.searchArea is None:
             self.counter += 1
-            if self.counter == FRAME_SKIP:
+            if self.counter == self.FRAME_SKIP:
                 self.counter = 0
-                # Size of full video
+                # Set search area to size of full video
                 self.searchArea = self.videoRect
         else:
             # Detect and draw!
             face = self.detectAndDrawFace()
             if face:
                 self.faceList.append(face)
-                if len(self.faceList) > FACES_REQUIRED:
+                if len(self.faceList) > self.NUM_TO_AVG:
                     self.faceList = self.faceList[1:]
-                    avgArea = averageArea(self.faceList)
-                    proportion = avgArea / float(self.videoRect.area())
-                    if proportion > PROPORTION_LIMIT:
-                        if not self.alerting:
-                            alert()
-                            self.alerting = True
+                    proportion = Rect.avgArea(self.faceList) / self.videoRect.area()
+                    if proportion > self.PROPORTION_LIMIT:
+                        self.alert()
                     else:
                         self.alerting = False
                 else:
@@ -137,8 +117,8 @@ class PostureTracker:
         cv2.imshow('Video', self.currentFrame)
 
     def start(self):
-
         # Start run loop
+        print "Tracker started! Press q in window or ^c in terminal to quit."
         while True:
             self.runLoop()
             # Quit if q is pressed
