@@ -1,18 +1,14 @@
 import cv2
 import sys
 import time
-# import subprocess
-from subprocess import Popen
+from subprocess import Popen as runAsync
 
 # Global vars
 SCALE_FACTOR = 0.5
 SEARCH_AREA_FACTOR = 1.5
 FRAME_SKIP = 10
 FACES_REQUIRED = 20
-VIDEO = cv2.VideoCapture(0)
-CASCADE = cv2.CascadeClassifier("cascade.xml")
 PROPORTION_LIMIT = 0.3
-ALERTING = False
 
 # Struct for a rectangle
 class Rect:
@@ -25,10 +21,6 @@ class Rect:
     def area(self):
         return self.w * self.h
 
-    def distance(self):
-        # Based purely on area
-        return self.area()
-
     def midpoint(self):
         return (self.x + self.w/2, self.y + self.h/2)
 
@@ -36,7 +28,7 @@ class Rect:
         return "x:%i, y:%i, w:%i, h:%i" % (self.x, self.y, self.w, self.h)
 
 def alert():
-    Popen(['afplay', 'alert.mp3'])
+    runAsync(['afplay', 'alert.mp3'])
 
 def cropFrameToRect(frame, rect):
     return frame[rect.y:rect.y+rect.h, rect.x:rect.x+rect.w]
@@ -49,106 +41,116 @@ def getLargestFace(faces):
 def drawFace(face, frame, color=(255, 0, 0)):
     cv2.rectangle(frame, (face.x, face.y), (face.x+face.w, face.y+face.h), color, 2)
 
-def calculateSearchArea(face, frameRect, factor):
+def calculateSearchArea(face, videoRect, factor):
     # TODO: document this shindig
     w = int(factor * face.w)
     h = int(factor * face.h)
     x = max(face.midpoint()[0] - w/2, 0)
     y = max(face.midpoint()[1] - h/2, 0)
-    w = min(w, frameRect.w-x)
-    h = min(h, frameRect.h-y)
+    w = min(w, videoRect.w-x)
+    h = min(h, videoRect.h-y)
     return Rect(x, y, w, h)
 
 def averageArea(faceList):
     return sum(face.area() for face in faceList) / len(faceList)
 
-def detectAndDrawFace(frame, searchArea):
 
-    searchFrame = cropFrameToRect(frame, searchArea)
+# Main class
+class PostureTracker:
+    def __init__(self):
+        # OpenCV stuff
+        self.video = cv2.VideoCapture(0)
+        self.cascade = cv2.CascadeClassifier("cascade.xml")
 
-    faces = CASCADE.detectMultiScale(cv2.cvtColor(searchFrame, cv2.COLOR_BGR2GRAY), scaleFactor=1.1, minNeighbors=5, minSize=(30, 30), flags=cv2.cv.CV_HAAR_SCALE_IMAGE)
+        # Set some initial values
+        self.currentFrame = None
+        self.searchArea = None
+        self.faceList = []
+        self.alerting = False
 
-    # Convert faces to Rect objects and find largest
-    faces = [Rect(x, y, w, h) for (x, y, w, h) in faces]
-    face = getLargestFace(faces)
+        # Used for skipping frames when searchArea is None
+        self.counter = 0
 
-    if face:
-        # Add back searchArea distance
-        face.x += searchArea.x
-        face.y += searchArea.y
+        # Get size of video
+        _, frame = self.video.read()
+        frame = cv2.resize(frame, (0,0), fx=SCALE_FACTOR, fy=SCALE_FACTOR)
+        self.videoRect = Rect(0, 0, len(frame[0]), len(frame))
 
-        # Draw face and calculate new search area
-        drawFace(face, frame)
+    def detectAndDrawFace(self):
 
-        # Size of full video
-        frameRect = Rect(0, 0, len(frame[0]), len(frame))
-        searchArea = calculateSearchArea(face, frameRect, SEARCH_AREA_FACTOR)
-    else:
-        searchArea = None
+        searchFrame = cropFrameToRect(self.currentFrame, self.searchArea)
+        faces = self.cascade.detectMultiScale(cv2.cvtColor(searchFrame, cv2.COLOR_BGR2GRAY), scaleFactor=1.1, minNeighbors=5, minSize=(30, 30), flags=cv2.cv.CV_HAAR_SCALE_IMAGE)
 
-    return face, searchArea
+        # Convert faces to Rect objects and find largest
+        faces = [Rect(x, y, w, h) for (x, y, w, h) in faces]
+        face = getLargestFace(faces)
 
-def runLoop():
-    searchArea = None
+        if face:
+            # Add back searchArea distance
+            face.x += self.searchArea.x
+            face.y += self.searchArea.y
 
-    # Used for skipping frames when searchArea is None
-    counter = 0
-    faceList = []
+            # Draw face and calculate new search area
+            drawFace(face, self.currentFrame)
 
-    # Capture one frame to take measurements
-    ret, frame = VIDEO.read()
-    frame = cv2.resize(frame, (0,0), fx=SCALE_FACTOR, fy=SCALE_FACTOR)
-    frameRect = Rect(0, 0, len(frame[0]), len(frame))
+            # Size of full video
+            searchArea = calculateSearchArea(face, self.videoRect, SEARCH_AREA_FACTOR)
+        else:
+            self.searchArea = None
 
-    while True:
+        return face
 
+    def runLoop(self):
         # Capture video and resize
-        ret, frame = VIDEO.read()
-        frame = cv2.resize(frame, (0,0), fx=SCALE_FACTOR, fy=SCALE_FACTOR) 
+        _, frame = self.video.read()
+        self.currentFrame = cv2.resize(frame, (0,0), fx=SCALE_FACTOR, fy=SCALE_FACTOR) 
 
         # If no search area, look for face every nth frame
-        if searchArea is None:
-            counter += 1
-            if counter == FRAME_SKIP:
-                counter = 0
+        if self.searchArea is None:
+            self.counter += 1
+            if self.counter == FRAME_SKIP:
+                self.counter = 0
                 # Size of full video
-                searchArea = frameRect
+                self.searchArea = self.videoRect
         else:
             # Detect and draw!
-            face, searchArea = detectAndDrawFace(frame, searchArea)
+            face = self.detectAndDrawFace()
             if face:
-                faceList.append(face)
-                if len(faceList) > FACES_REQUIRED:
-                    faceList = faceList[1:]
-                    avgArea = averageArea(faceList)
-                    proportion = avgArea / float(frameRect.area())
+                self.faceList.append(face)
+                if len(self.faceList) > FACES_REQUIRED:
+                    self.faceList = self.faceList[1:]
+                    avgArea = averageArea(self.faceList)
+                    proportion = avgArea / float(self.videoRect.area())
                     if proportion > PROPORTION_LIMIT:
-                        if not ALERTING:
+                        if not self.alerting:
                             alert()
-                            ALERTING = True
+                            self.alerting = True
                     else:
-                        ALERTING = False
+                        self.alerting = False
                 else:
-                    ALERTING = False
+                    self.alerting = False
             else:
                 faceList = []
-                ALERTING = False
+                self.alerting = False
 
         # Display the resulting frame
-        cv2.imshow('Video', frame)
+        cv2.imshow('Video', self.currentFrame)
 
-        # Quit if q is pressed
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
+    def start(self):
 
-    # When everything is done, release the capture
-    VIDEO.release()
-    cv2.destroyAllWindows()
-
+        # Start run loop
+        while True:
+            self.runLoop()
+            # Quit if q is pressed
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+        # When everything is done, release the capture
+        self.video.release()
+        cv2.destroyAllWindows()
 
 def main():
-    runLoop()
-
+    tracker = PostureTracker()
+    tracker.start()
 
 if __name__ == '__main__':
     main()
