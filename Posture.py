@@ -4,8 +4,6 @@ import time
 from Rect import Rect
 from subprocess import Popen as runAsync
 
-
-# Main class
 class PostureTracker:
     def __init__(self):
         # OpenCV stuff
@@ -36,12 +34,17 @@ class PostureTracker:
         frame = cv2.resize(frame, (0,0), fx=self.SCALE_FACTOR, fy=self.SCALE_FACTOR)
         self.videoRect = Rect(0, 0, len(frame[0]), len(frame))
 
-    def alert(self):
-        if not self.alerting:
-            self.alerting = True
-            # Play sound
-            runAsync(['afplay', 'alert.mp3'])
-            self.faceColor = self.ALERT_COLOR
+    def setAlerting(self, doAlert):
+        if doAlert:
+            if not self.alerting:
+                self.alerting = True
+                # Play sound
+                runAsync(['afplay', 'alert.mp3'])
+                self.faceColor = self.ALERT_COLOR
+        else:
+            if self.alerting:
+                self.alerting = False
+                self.faceColor = self.GOOD_COLOR
 
     def cropFrameToRect(self, frame, rect):
         return frame[rect.y:rect.y+rect.h, rect.x:rect.x+rect.w]
@@ -84,6 +87,9 @@ class PostureTracker:
         return face
 
     def runLoop(self):
+
+        doAlert = False
+
         # Capture video and resize
         _, frame = self.video.read()
         self.currentFrame = cv2.resize(frame, (0,0), fx=self.SCALE_FACTOR, fy=self.SCALE_FACTOR) 
@@ -98,20 +104,21 @@ class PostureTracker:
         else:
             # Detect and draw!
             face = self.detectAndDrawFace()
+
             if face:
+                # Compile the last n face areas
                 self.faceList.append(face)
                 if len(self.faceList) > self.NUM_TO_AVG:
                     self.faceList = self.faceList[1:]
+
+                    # Now, decide whether to alert
                     proportion = Rect.avgArea(self.faceList) / self.videoRect.area()
                     if proportion > self.PROPORTION_LIMIT:
-                        self.alert()
-                    else:
-                        self.alerting = False
-                else:
-                    self.alerting = False
+                        doAlert = True
             else:
                 faceList = []
-                self.alerting = False
+
+        self.setAlerting(doAlert);
 
         # Display the resulting frame
         cv2.imshow('Video', self.currentFrame)
@@ -134,5 +141,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-
