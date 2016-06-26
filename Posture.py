@@ -1,5 +1,4 @@
 import cv2
-import numpy as np
 import sys
 import time
 from Rect import Rect
@@ -15,7 +14,7 @@ class PostureTracker:
         self.SEARCH_AREA_FACTOR = 1.5
         self.SCALE_FACTOR = 0.5
         self.FRAME_SKIP = 10
-        self.NUM_TO_AVG = 20
+        self.NUM_TO_AVG = 10
         self.PROPORTION_LIMIT = 0.2
         self.GOOD_COLOR = (0, 255, 0)
         self.ALERT_COLOR = (0, 0, 255)
@@ -23,7 +22,7 @@ class PostureTracker:
         # Set some initial values
         self.currentFrame = None
         self.searchArea = None
-        self.faceAreas = []
+        self.faceList = []
         self.alerting = False
         self.faceColor = self.GOOD_COLOR
 
@@ -89,8 +88,6 @@ class PostureTracker:
 
     def runLoop(self):
 
-        doAlert = False
-
         # Capture video and resize
         _, frame = self.video.read()
         self.currentFrame = cv2.resize(frame, (0,0), fx=self.SCALE_FACTOR, fy=self.SCALE_FACTOR) 
@@ -108,18 +105,20 @@ class PostureTracker:
 
             if face:
                 # Compile the last n face areas
-                self.faceAreas.append(face.area())
-                if len(self.faceAreas) > self.NUM_TO_AVG:
-                    self.faceAreas = self.faceAreas[1:]
+                self.faceList.append(face)
+                if len(self.faceList) > self.NUM_TO_AVG:
+                    self.faceList = self.faceList[1:]
 
                     # Now, decide whether to alert
-                    proportion = np.mean(self.faceAreas) / self.videoRect.area()
+                    proportion = Rect.avgArea(self.faceList) / self.videoRect.area()
                     if proportion > self.PROPORTION_LIMIT:
-                        doAlert = True
-            else:
-                faceAreas = []
+                        self.setAlerting(True)
+                    else:
+                        self.setAlerting(False)
 
-        self.setAlerting(doAlert);
+            else:
+                faceList = []
+
 
         # Display the resulting frame
         cv2.imshow('Video', self.currentFrame)

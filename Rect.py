@@ -19,6 +19,10 @@ class Rect:
     # Static
 
     @staticmethod
+    def avgArea(rects):
+        return sum(rect.area() for rect in rects) / len(rects)
+
+    @staticmethod
     def largestRect(rects):
         if len(rects) is 0: 
             return None
