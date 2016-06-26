@@ -1,4 +1,5 @@
 import cv2
+import numpy as np
 import sys
 import time
 from Rect import Rect
@@ -22,7 +23,7 @@ class PostureTracker:
         # Set some initial values
         self.currentFrame = None
         self.searchArea = None
-        self.faceList = []
+        self.faceAreas = []
         self.alerting = False
         self.faceColor = self.GOOD_COLOR
 
@@ -107,16 +108,16 @@ class PostureTracker:
 
             if face:
                 # Compile the last n face areas
-                self.faceList.append(face)
-                if len(self.faceList) > self.NUM_TO_AVG:
-                    self.faceList = self.faceList[1:]
+                self.faceAreas.append(face.area())
+                if len(self.faceAreas) > self.NUM_TO_AVG:
+                    self.faceAreas = self.faceAreas[1:]
 
                     # Now, decide whether to alert
-                    proportion = Rect.avgArea(self.faceList) / self.videoRect.area()
+                    proportion = np.mean(self.faceAreas) / self.videoRect.area()
                     if proportion > self.PROPORTION_LIMIT:
                         doAlert = True
             else:
-                faceList = []
+                faceAreas = []
 
         self.setAlerting(doAlert);
 
